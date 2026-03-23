@@ -2,7 +2,7 @@
 
 A web application for creating **ISO 21496-1 gain map JPEGs** from HDR and SDR source images. Outputs a single JPEG file that displays correctly on both standard (SDR) and HDR-capable displays — with the SDR version as the baseline and HDR headroom encoded in an embedded gain map.
 
-Inspired by [WebSharpPro](https://gregbenzphotography.com/photography-tutorials/websharppro-hdr-jpegs/) by **Greg Benz** — a Lightroom plugin for HDR gain map JPEGs. This tool is an open, self-hosted alternative for photographers who want flexibility outside the LR ecosystem.
+Inspired by [WebSharpPro](https://gregbenzphotography.com/web-sharp-pro-panel) by **Greg Benz** — a Lightroom plugin for HDR gain map JPEGs. This tool is an open, self-hosted alternative for photographers who want flexibility outside the LR ecosystem.
 
 ---
 
@@ -196,6 +196,6 @@ GainMapWebApp/
 
 ## Acknowledgments
 
-- **Greg Benz** — [WebSharpPro](https://gregbenzphotography.com/photography-tutorials/websharppro-hdr-jpegs/) plugin and HDR JPEG workflow. His tutorials and plugin were the primary inspiration for this project.
+- **Greg Benz** — [WebSharpPro](https://gregbenzphotography.com/web-sharp-pro-panel) plugin and HDR JPEG workflow. His tutorials and plugin were the primary inspiration for this project.
 - [hdr-conversion](https://github.com/nicholasduck/hdr-conversion) — ISO 21496-1 gain map computation and encoding
 - [exiftool](https://exiftool.org/) — metadata handling
