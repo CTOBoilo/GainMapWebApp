@@ -196,6 +196,6 @@ GainMapWebApp/
 
 ## Acknowledgments
 
-- **Greg Benz** — [WebSharpPro](https://gregbenzphotography.com/web-sharp-pro-panel) plugin and HDR JPEG workflow. His tutorials and plugin were the primary inspiration for this project.
-- [hdr-conversion](https://github.com/nicholasduck/hdr-conversion) — ISO 21496-1 gain map computation and encoding
+- **Greg Benz** — [WebSharpPro](https://gregbenzphotography.com/photography-tutorials/websharppro-hdr-jpegs/) plugin and HDR JPEG workflow. His tutorials and plugin were the primary inspiration for this project.
+- [hdr-conversion](https://github.com/Jackchou00/hdr-conversion) — ISO 21496-1 gain map computation and encoding
 - [exiftool](https://exiftool.org/) — metadata handling
