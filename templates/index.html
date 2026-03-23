@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gain Map Tool</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Gain Map JPEG Tool</h1>
+        <p>Upload an HDR source and an SDR source to create an ISO 21496-1 gain map JPEG with RGB gain maps.</p>
+
+        <form id="convertForm" action="/convert" method="POST" enctype="multipart/form-data">
+
+            {# ── File inputs ── #}
+
+            <div class="upload-group">
+                <label for="hdr_file">HDR Source</label>
+                <span class="hint">Linear 32-bit TIFF (P3 gamut)</span>
+                <div class="drop-zone" id="hdrDropZone">
+                    <input type="file" id="hdr_file" name="hdr_file" accept=".tif,.tiff" required>
+                    <span class="drop-label">Choose file or drag &amp; drop here</span>
+                </div>
+            </div>
+
+            <div class="upload-group">
+                <label for="sdr_file">SDR Source</label>
+                <span class="hint">16-bit TIFF — tone-mapped version for SDR displays</span>
+                <div class="drop-zone" id="sdrDropZone">
+                    <input type="file" id="sdr_file" name="sdr_file" accept=".tif,.tiff" required>
+                    <span class="drop-label">Choose file or drag &amp; drop here</span>
+                </div>
+            </div>
+
+            <div class="upload-group">
+                <label for="sdr_colorspace">SDR Color Space</label>
+                <span class="hint">Must match the color space your SDR TIFF was exported in</span>
+                <select id="sdr_colorspace" name="sdr_colorspace">
+                    <option value="srgb" selected>sRGB</option>
+                    <option value="display_p3">Display P3</option>
+                    <option value="adobe_rgb">Adobe RGB (1998)</option>
+                    <option value="prophoto_rgb">ProPhoto RGB</option>
+                </select>
+            </div>
+
+            {# ── Options panel ── #}
+
+            <div class="options-panel">
+                <div class="options-header" id="optionsToggle">
+                    <span>Options</span>
+                    <span class="options-arrow" id="optionsArrow">&#9660;</span>
+                </div>
+
+                <div class="options-body" id="optionsBody">
+
+                    {# JPEG quality #}
+                    <div class="option-row">
+                        <label for="jpeg_quality">JPEG Quality</label>
+                        <div class="slider-row">
+                            <input type="range" id="jpeg_quality" name="jpeg_quality"
+                                   min="1" max="100" value="95">
+                            <span class="slider-value" id="jpegQualityValue">95</span>
+                        </div>
+                    </div>
+
+                    {# Resize #}
+                    <div class="option-row">
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="enable_resize" name="enable_resize">
+                            <label for="enable_resize">Resize output</label>
+                        </div>
+                    </div>
+
+                    <div class="option-sub" id="resizeOptions">
+                        <div class="option-row">
+                            <label for="long_edge">Long edge (px)</label>
+                            <input type="number" id="long_edge" name="long_edge"
+                                   value="2160" min="100" max="20000" step="1">
+                        </div>
+                        <div class="option-row">
+                            <label for="sharpen_amount">Sharpen amount</label>
+                            <div class="slider-row">
+                                <input type="range" id="sharpen_amount" name="sharpen_amount"
+                                       min="0" max="500" value="100">
+                                <span class="slider-value" id="sharpenValue">100</span>
+                            </div>
+                            <span class="hint">Output sharpening compensates for softness from downscaling. 0 = off, 50-150 typical for web.</span>
+                        </div>
+                    </div>
+
+                    {# Metadata toggles #}
+                    <div class="option-row">
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="enable_exif" name="enable_exif" checked>
+                            <label for="enable_exif">Preserve EXIF metadata</label>
+                        </div>
+                        <span class="hint">Copy camera info (model, lens, exposure, GPS) from SDR source</span>
+                    </div>
+
+                    <div class="option-row">
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="enable_xmp_dir" name="enable_xmp_dir" checked>
+                            <label for="enable_xmp_dir">XMP Directory Item Semantic</label>
+                        </div>
+                        <span class="hint">Label images as Primary + GainMap for HDR viewer compatibility</span>
+                    </div>
+
+                    <div class="option-row">
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="enable_ccv" name="enable_ccv" checked>
+                            <label for="enable_ccv">CCV luminance metadata</label>
+                        </div>
+                        <span class="hint">Write gain map parameters as XMP for wider viewer support</span>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" id="submitBtn">Create Gain Map JPEG</button>
+        </form>
+
+        <div id="loadingOverlay" class="loading-overlay hidden">
+            <div class="spinner"></div>
+            <p class="loading-text">Processing images&hellip;</p>
+            <p class="loading-sub">This can take a minute for large files.</p>
+        </div>
+
+        {% if message %}
+        <div class="message {{ messageType }}">
+            {{ message }}
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+    (function() {
+        // Drag & drop
+        function setupDropZone(zoneId, inputId) {
+            var zone = document.getElementById(zoneId);
+            var input = document.getElementById(inputId);
+            var label = zone.querySelector('.drop-label');
+
+            function updateLabel() {
+                if (input.files && input.files.length > 0) {
+                    label.textContent = input.files[0].name;
+                    zone.classList.add('has-file');
+                } else {
+                    label.textContent = 'Choose file or drag & drop here';
+                    zone.classList.remove('has-file');
+                }
+            }
+
+            input.addEventListener('change', updateLabel);
+
+            zone.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                zone.classList.add('drag-over');
+            });
+            zone.addEventListener('dragleave', function(e) {
+                e.preventDefault();
+                zone.classList.remove('drag-over');
+            });
+            zone.addEventListener('drop', function(e) {
+                e.preventDefault();
+                zone.classList.remove('drag-over');
+                if (e.dataTransfer.files.length > 0) {
+                    input.files = e.dataTransfer.files;
+                    updateLabel();
+                }
+            });
+        }
+
+        setupDropZone('hdrDropZone', 'hdr_file');
+        setupDropZone('sdrDropZone', 'sdr_file');
+
+        // Options panel toggle
+        var toggle = document.getElementById('optionsToggle');
+        var body = document.getElementById('optionsBody');
+        var arrow = document.getElementById('optionsArrow');
+
+        toggle.addEventListener('click', function() {
+            var isOpen = body.classList.toggle('open');
+            arrow.style.transform = isOpen ? 'rotate(180deg)' : '';
+        });
+
+        // Resize sub-options visibility
+        var resizeCheck = document.getElementById('enable_resize');
+        var resizeOpts = document.getElementById('resizeOptions');
+
+        function updateResizeVisibility() {
+            resizeOpts.style.display = resizeCheck.checked ? 'block' : 'none';
+        }
+        resizeCheck.addEventListener('change', updateResizeVisibility);
+        updateResizeVisibility();
+
+        // Slider live values
+        var qualitySlider = document.getElementById('jpeg_quality');
+        var qualityDisplay = document.getElementById('jpegQualityValue');
+        qualitySlider.addEventListener('input', function() {
+            qualityDisplay.textContent = qualitySlider.value;
+        });
+
+        var sharpenSlider = document.getElementById('sharpen_amount');
+        var sharpenDisplay = document.getElementById('sharpenValue');
+        sharpenSlider.addEventListener('input', function() {
+            sharpenDisplay.textContent = sharpenSlider.value;
+        });
+
+        // Loading spinner
+        var form = document.getElementById('convertForm');
+        var overlay = document.getElementById('loadingOverlay');
+        var submitBtn = document.getElementById('submitBtn');
+
+        form.addEventListener('submit', function() {
+            overlay.classList.remove('hidden');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Processing\u2026';
+        });
+    })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proof — {{ outputFilename }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="results-container">
+        <div class="results-header">
+            <h1>Proof: {{ outputFilename }}</h1>
+            <div class="results-actions">
+                <a href="/download/{{ sessionId }}" class="btn btn-primary">Download JPEG</a>
+                <a href="/" class="btn btn-secondary">New Conversion</a>
+            </div>
+        </div>
+
+        <div class="preview-grid">
+            <div class="preview-card">
+                <h2>SDR Baseline</h2>
+                <p class="preview-desc">What non-HDR displays will show</p>
+                <div class="preview-img-wrap">
+                    <img src="/preview/{{ sessionId }}/sdr" alt="SDR baseline" loading="lazy">
+                </div>
+            </div>
+
+            <div class="preview-card">
+                <h2>Gain Map</h2>
+                <p class="preview-desc">HDR headroom — bright = more boost</p>
+                <div class="preview-img-wrap">
+                    <img src="/preview/{{ sessionId }}/gainmap" alt="Gain map visualization" loading="lazy">
+                </div>
+            </div>
+
+            <div class="preview-card">
+                <h2>Output JPEG</h2>
+                <p class="preview-desc">Final ISO 21496-1 gain map JPEG (SDR view)</p>
+                <div class="preview-img-wrap">
+                    <img src="/preview/{{ sessionId }}/output" alt="Output JPEG preview" loading="lazy">
+                </div>
+            </div>
+        </div>
+
+        <div class="results-footer">
+            <a href="/download/{{ sessionId }}" class="btn btn-primary btn-large">Download {{ outputFilename }}</a>
+        </div>
+    </div>
+</body>
+</html>
