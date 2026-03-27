@@ -21,6 +21,7 @@
                 <div class="drop-zone" id="hdrDropZone">
                     <input type="file" id="hdr_file" name="hdr_file" accept=".tif,.tiff" required>
                     <span class="drop-label">Choose file or drag &amp; drop here</span>
+                    <button type="button" class="clear-btn hidden" id="hdrClearBtn" title="Clear file">&times;</button>
                 </div>
             </div>
 
@@ -30,6 +31,7 @@
                 <div class="drop-zone" id="sdrDropZone">
                     <input type="file" id="sdr_file" name="sdr_file" accept=".tif,.tiff" required>
                     <span class="drop-label">Choose file or drag &amp; drop here</span>
+                    <button type="button" class="clear-btn hidden" id="sdrClearBtn" title="Clear file">&times;</button>
                 </div>
             </div>
 
@@ -134,23 +136,31 @@
 
     <script>
     (function() {
-        // Drag & drop
-        function setupDropZone(zoneId, inputId) {
+        function setupDropZone(zoneId, inputId, clearBtnId) {
             var zone = document.getElementById(zoneId);
             var input = document.getElementById(inputId);
             var label = zone.querySelector('.drop-label');
+            var clearBtn = document.getElementById(clearBtnId);
 
             function updateLabel() {
                 if (input.files && input.files.length > 0) {
                     label.textContent = input.files[0].name;
                     zone.classList.add('has-file');
+                    clearBtn.classList.remove('hidden');
                 } else {
                     label.textContent = 'Choose file or drag & drop here';
                     zone.classList.remove('has-file');
+                    clearBtn.classList.add('hidden');
                 }
             }
 
             input.addEventListener('change', updateLabel);
+
+            clearBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                input.value = '';
+                updateLabel();
+            });
 
             zone.addEventListener('dragover', function(e) {
                 e.preventDefault();
@@ -170,8 +180,8 @@
             });
         }
 
-        setupDropZone('hdrDropZone', 'hdr_file');
-        setupDropZone('sdrDropZone', 'sdr_file');
+        setupDropZone('hdrDropZone', 'hdr_file', 'hdrClearBtn');
+        setupDropZone('sdrDropZone', 'sdr_file', 'sdrClearBtn');
 
         // Options panel toggle
         var toggle = document.getElementById('optionsToggle');

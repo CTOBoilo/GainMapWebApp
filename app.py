@@ -1,25 +1,25 @@
 import os
 import shutil
 import tempfile
+import time
 import uuid
 
 from flask import Flask, render_template, request, send_file, redirect, url_for, abort
 
 from processing import (
-    copyExifMetadata,
-    createGainMapJpeg,
+    computeGainMap,
     readHdrSource,
     readSdrSource,
-    resizeArrays,
+    resizeOutput,
     savePreviewImages,
-    sharpenImage,
-    writeContainerXmp,
-    writeCcvMetadata,
+    sharpenBaseline,
+    writeAllMetadata,
+    writeGainMapJpeg,
 )
 
 app = Flask(__name__)
 
-app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB
+app.config["MAX_CONTENT_LENGTH"] = None
 
 ALLOWED_EXTENSIONS = {".tif", ".tiff"}
 
@@ -108,45 +108,58 @@ def convert():
         hdrFile.save(hdrPath)
         sdrFile.save(sdrPath)
 
+        def _log(msg):
+            import sys
+            sys.stderr.write(msg + "\n")
+            sys.stderr.flush()
+
+        t0 = time.time()
+
         hdrLinear = readHdrSource(hdrPath)
         sdrLinear, sdrGamma = readSdrSource(sdrPath, colorSpace=sdrColorspace)
+        _log(f"  [timing] Read sources: {time.time() - t0:.1f}s")
 
-        # Optional resize
+        t1 = time.time()
+        gainmapData = computeGainMap(hdrLinear, sdrLinear, sdrGamma)
+        del sdrLinear, sdrGamma
+        _log(f"  [timing] Compute gain map: {time.time() - t1:.1f}s")
+
         if enableResize:
-            hdrLinear, sdrLinear, sdrGamma = resizeArrays(
-                hdrLinear, sdrLinear, sdrGamma, longEdge
-            )
-            # Only sharpen when resizing (downscaling softens the image)
+            t2 = time.time()
+            resizeOutput(gainmapData, longEdge)
             if sharpenAmount > 0:
-                sdrGamma = sharpenImage(sdrGamma, amount=sharpenAmount)
+                sharpenBaseline(gainmapData, amount=sharpenAmount)
+            _log(f"  [timing] Resize + sharpen: {time.time() - t2:.1f}s")
 
-        # Compute gain map and write JPEG
+        t3 = time.time()
         baseName = os.path.splitext(hdrFile.filename)[0]
         outputFilename = f"{baseName}_gainmap.jpg"
         outputPath = os.path.join(tempDir, outputFilename)
+        writeGainMapJpeg(gainmapData, outputPath, jpegQuality=jpegQuality)
+        _log(f"  [timing] Write JPEG: {time.time() - t3:.1f}s")
 
-        gainmapData = createGainMapJpeg(
-            hdrLinear, sdrLinear, sdrGamma, outputPath, jpegQuality=jpegQuality
+        t4 = time.time()
+        writeAllMetadata(
+            outputPath,
+            sourceTiffPath=sdrPath,
+            enableExif=enableExif,
+            enableXmpDir=enableXmpDir,
+            enableCcv=enableCcv,
+            gainmapMetadata=gainmapData["metadata"],
+            hdrLinear=hdrLinear,
         )
+        del hdrLinear
+        _log(f"  [timing] Metadata: {time.time() - t4:.1f}s")
 
-        # Post-processing metadata (exiftool operates on the written JPEG)
-        if enableExif:
-            copyExifMetadata(sdrPath, outputPath)
-
-        if enableXmpDir:
-            writeContainerXmp(outputPath)
-
-        if enableCcv:
-            writeCcvMetadata(gainmapData["metadata"], hdrLinear, outputPath)
-
-        # Source files no longer needed — clean them up to free disk space
         os.remove(hdrPath)
         os.remove(sdrPath)
 
-        # Generate preview images for the proofing page
+        t5 = time.time()
         previewDir = os.path.join(tempDir, "previews")
         os.makedirs(previewDir)
-        savePreviewImages(sdrGamma, gainmapData, outputPath, previewDir)
+        savePreviewImages(gainmapData, outputPath, previewDir)
+        _log(f"  [timing] Previews: {time.time() - t5:.1f}s")
+        _log(f"  [timing] TOTAL: {time.time() - t0:.1f}s")
 
         # Register session
         sessionId = uuid.uuid4().hex[:12]
@@ -239,4 +252,9 @@ def download(session_id):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    try:
+        app.run(debug=True, port=port)
+    except OSError:
+        print(f"Port {port} is busy (macOS AirPlay often uses 5000). Trying {port + 1}.")
+        app.run(debug=True, port=port + 1)

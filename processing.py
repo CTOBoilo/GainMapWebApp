@@ -168,60 +168,8 @@ def _linearize(data, colorSpace):
 # Resize and sharpen
 # ───────────────────────────────────────────────────────
 
-def resizeArrays(hdrLinear, sdrLinear, sdrGamma, longEdge):
-    """Resize all three arrays so the longest side equals longEdge pixels.
-
-    If the image is already smaller than longEdge, returns unchanged arrays.
-    Uses LANCZOS resampling (high-quality downscale filter).
-
-    Args:
-        hdrLinear: float32 (H, W, 3) — linear HDR
-        sdrLinear: float32 (H, W, 3) — linear SDR
-        sdrGamma: uint8 (H, W, 3) — gamma-encoded SDR
-        longEdge: Target size for the longest dimension in pixels.
-
-    Returns:
-        Tuple of (hdrLinear, sdrLinear, sdrGamma) — resized.
-    """
-    from PIL import Image
-
-    h, w = hdrLinear.shape[:2]
-    currentLong = max(h, w)
-
-    if currentLong <= longEdge:
-        return hdrLinear, sdrLinear, sdrGamma
-
-    scale = longEdge / currentLong
-    newW = int(w * scale)
-    newH = int(h * scale)
-
-    sdrGammaImg = Image.fromarray(sdrGamma)
-    sdrGamma = np.array(sdrGammaImg.resize((newW, newH), Image.LANCZOS))
-
-    hdrLinear = _resizeFloat32(hdrLinear, newW, newH)
-    sdrLinear = _resizeFloat32(sdrLinear, newW, newH)
-
-    return hdrLinear, sdrLinear, sdrGamma
-
-
-def _resizeFloat32(arr, newW, newH):
-    """Resize a float32 (H, W, 3) array using Pillow's LANCZOS filter.
-
-    Pillow doesn't support float32 RGB directly, so we resize each
-    channel independently using 'F' mode (32-bit float grayscale).
-    """
-    from PIL import Image
-
-    channels = []
-    for c in range(arr.shape[2]):
-        ch = Image.fromarray(arr[:, :, c], mode="F")
-        ch = ch.resize((newW, newH), Image.LANCZOS)
-        channels.append(np.array(ch))
-    return np.stack(channels, axis=-1)
-
-
-def sharpenImage(sdrGamma, amount=100):
-    """Apply output sharpening to the SDR baseline (uint8 RGB array).
+def sharpenBaseline(gainmapData, amount=100):
+    """Apply output sharpening to the baseline in gainmapData (in place).
 
     Downscaling softens images, so output sharpening compensates for
     that lost detail. This is standard practice for web/social publishing.
@@ -232,69 +180,158 @@ def sharpenImage(sdrGamma, amount=100):
     - threshold=0 (sharpen all pixels, not just high-contrast edges)
 
     Args:
-        sdrGamma: uint8 array (H, W, 3)
+        gainmapData: The dict from computeGainMap (baseline is uint8).
         amount: Sharpening strength as a percentage (0-500).
 
     Returns:
-        Sharpened uint8 array (H, W, 3).
+        The same gainmapData dict with sharpened baseline.
     """
     from PIL import Image, ImageFilter
 
-    img = Image.fromarray(sdrGamma)
+    img = Image.fromarray(gainmapData["baseline"])
     img = img.filter(ImageFilter.UnsharpMask(radius=0.8, percent=amount, threshold=0))
-    return np.array(img)
+    gainmapData["baseline"] = np.array(img)
+    return gainmapData
 
 
 # ───────────────────────────────────────────────────────
 # Gain map creation
 # ───────────────────────────────────────────────────────
 
-def createGainMapJpeg(hdrLinear, sdrLinear, sdrGamma, outputPath, jpegQuality=95):
-    """Create an ISO 21496-1 gain map JPEG from HDR and SDR arrays.
+def _loadIccProfile():
+    """Load the Image P3 ICC profile bytes from the bundled .icc file."""
+    iccPath = os.path.join(os.path.dirname(__file__), "icc", "imageP3.icc")
+    with open(iccPath, "rb") as f:
+        return f.read()
+
+
+def computeGainMap(hdrLinear, sdrLinear, sdrGamma):
+    """Compute the ISO 21496-1 gain map at full resolution.
+
+    Reimplements the gain map math from hdr-conversion directly,
+    skipping the library's expensive colour.eotf_inverse() call on
+    the baseline (which we discard anyway). On a 100 MP image this
+    saves ~40 seconds.
 
     Args:
         hdrLinear: float32 (H, W, 3), linear light, values can exceed 1.0.
         sdrLinear: float32 (H, W, 3), linear light, values in [0.0, 1.0].
         sdrGamma: uint8 (H, W, 3), original gamma-encoded SDR.
-        outputPath: Where to write the output JPEG.
-        jpegQuality: JPEG quality for both baseline and gain map (1-100).
 
     Returns:
-        The gainmapData dict (for preview generation and metadata extraction).
+        A GainmapImage-compatible dict with baseline, gainmap, metadata,
+        and ICC profile bytes.
 
     Raises:
         ValueError: If the images have different dimensions.
     """
-    import hdrconv.convert as convert
-    import hdrconv.io as io
-    from hdrconv.core import HDRImage
-
     if hdrLinear.shape[:2] != sdrLinear.shape[:2]:
         raise ValueError(
             f"HDR and SDR images must have the same dimensions. "
             f"HDR: {hdrLinear.shape[:2]}, SDR: {sdrLinear.shape[:2]}"
         )
 
-    iccPath = os.path.join(os.path.dirname(__file__), "icc", "imageP3.icc")
-    with open(iccPath, "rb") as f:
-        p3IccProfile = f.read()
+    p3IccProfile = _loadIccProfile()
 
-    hdrImage = HDRImage(
-        data=hdrLinear,
-        transfer_function="linear",
-        color_space="p3",
+    offset = np.float32(1.0 / 64.0)
+
+    # HDR headroom: how many stops above SDR white the brightest pixel reaches
+    altHeadroom = float(np.log2(np.maximum(hdrLinear.max(), 1.001)))
+
+    # Per-pixel ratio between HDR and SDR in linear light.
+    # Offset prevents division by zero in dark regions.
+    ratio = (hdrLinear + offset) / (sdrLinear + offset)
+    np.clip(ratio, 1e-6, None, out=ratio)
+
+    # Log2 of ratio — the gain map lives in log space
+    gainmapLog = np.log2(ratio)
+    del ratio
+
+    # Per-channel min/max for normalization
+    gmMin = np.min(gainmapLog, axis=(0, 1))  # shape (3,)
+    gmMax = np.max(gainmapLog, axis=(0, 1))  # shape (3,)
+
+    # Normalize each channel to [0, 1] — vectorized, no per-channel loop
+    diffs = gmMax - gmMin
+    diffs = np.where(diffs == 0, 1.0, diffs)
+    gainmapLog -= gmMin
+    gainmapLog /= diffs
+    np.clip(gainmapLog, 0, 1, out=gainmapLog)
+
+    gainmapUint8 = (gainmapLog * 255).astype(np.uint8)
+    del gainmapLog
+
+    return {
+        "baseline": sdrGamma,
+        "gainmap": gainmapUint8,
+        "metadata": {
+            "minimum_version": 0,
+            "writer_version": 0,
+            "baseline_hdr_headroom": 0.0,
+            "alternate_hdr_headroom": altHeadroom,
+            "is_multichannel": True,
+            "use_base_colour_space": True,
+            "gainmap_min": tuple(gmMin.tolist()),
+            "gainmap_max": tuple(gmMax.tolist()),
+            "gainmap_gamma": (1.0, 1.0, 1.0),
+            "baseline_offset": (float(offset), float(offset), float(offset)),
+            "alternate_offset": (float(offset), float(offset), float(offset)),
+        },
+        "baseline_icc": p3IccProfile,
+        "gainmap_icc": p3IccProfile,
+    }
+
+
+def resizeOutput(gainmapData, longEdge):
+    """Resize the baseline and gain map arrays after gain map computation.
+
+    Metadata (GainMapMin/Max/Gamma etc.) stays from the full-res
+    computation — only the pixel arrays get downscaled.
+
+    Args:
+        gainmapData: The dict returned by computeGainMap.
+        longEdge: Target size for the longest dimension in pixels.
+
+    Returns:
+        The same gainmapData dict with resized arrays (modified in place).
+    """
+    from PIL import Image
+
+    baseline = gainmapData["baseline"]
+    gainmap = gainmapData["gainmap"]
+
+    h, w = baseline.shape[:2]
+    currentLong = max(h, w)
+
+    if currentLong <= longEdge:
+        return gainmapData
+
+    scale = longEdge / currentLong
+    newW = int(w * scale)
+    newH = int(h * scale)
+
+    baselineImg = Image.fromarray(baseline)
+    gainmapData["baseline"] = np.array(
+        baselineImg.resize((newW, newH), Image.LANCZOS)
     )
 
-    gainmapData = convert.hdr_to_gainmap(
-        hdrImage,
-        baseline=sdrLinear,
-        icc_profile=p3IccProfile,
-        gamma=1.0,
+    gainmapImg = Image.fromarray(gainmap)
+    gainmapData["gainmap"] = np.array(
+        gainmapImg.resize((newW, newH), Image.LANCZOS)
     )
 
-    # Replace the library's re-encoded baseline with our original
-    # gamma-encoded SDR values to avoid round-trip precision loss.
-    gainmapData["baseline"] = sdrGamma
+    return gainmapData
+
+
+def writeGainMapJpeg(gainmapData, outputPath, jpegQuality=95):
+    """Write the gain map data to an ISO 21496-1 JPEG file.
+
+    Args:
+        gainmapData: The dict from computeGainMap (possibly resized).
+        outputPath: Where to write the output JPEG.
+        jpegQuality: JPEG quality for both baseline and gain map (1-100).
+    """
+    import hdrconv.io as io
 
     io.write_21496(
         gainmapData,
@@ -303,25 +340,39 @@ def createGainMapJpeg(hdrLinear, sdrLinear, sdrGamma, outputPath, jpegQuality=95
         gainmap_quality=jpegQuality,
     )
 
-    return gainmapData
-
 
 # ───────────────────────────────────────────────────────
 # Post-processing metadata (via exiftool)
 # ───────────────────────────────────────────────────────
 
-def copyExifMetadata(sourceTiffPath, outputJpegPath):
-    """Copy EXIF, IPTC, and key XMP metadata from the source TIFF to the output JPEG.
+def writeAllMetadata(
+    outputJpegPath,
+    sourceTiffPath=None,
+    enableExif=False,
+    enableXmpDir=False,
+    enableCcv=False,
+    gainmapMetadata=None,
+    hdrLinear=None,
+):
+    """Write all post-processing metadata in a single exiftool call.
 
-    Copies camera info, editorial metadata, and Lightroom/Photoshop XMP.
-    Does NOT touch ICC profiles, MPF structure, or gain map XMP — those
-    are already set correctly by the gain map writer.
+    Combines ICC re-embedding, EXIF copy, XMP container labels, and CCV
+    luminance data into one invocation. Each full-res JPEG read+write
+    cycle is expensive, so batching saves significant time.
+
+    The ICC profile re-embed and ColorSpace=Uncalibrated always run.
+    Everything else is controlled by the boolean flags.
     """
-    subprocess.run(
-        [
-            "exiftool",
+    iccPath = os.path.join(os.path.dirname(__file__), "icc", "imageP3.icc")
+
+    args = ["exiftool"]
+
+    # --- EXIF/IPTC/XMP copy from source TIFF ---
+    if enableExif and sourceTiffPath:
+        args += [
             "-TagsFromFile", sourceTiffPath,
             "-EXIF:all",
+            "--EXIF:ColorSpace",
             "-IPTC:all",
             "-XMP-xmp:all",
             "-XMP-aux:all",
@@ -330,133 +381,96 @@ def copyExifMetadata(sourceTiffPath, outputJpegPath):
             "-XMP-xmpRights:all",
             "-XMP-dc:all",
             "-XMP-xmpMM:all",
-            "-overwrite_original",
-            outputJpegPath,
-        ],
-        check=True,
-        capture_output=True,
-    )
+            "--ICC_Profile:all",
+        ]
 
-
-def writeContainerXmp(outputJpegPath):
-    """Write XMP Directory Item Semantic metadata.
-
-    Labels the two images inside the MPF JPEG container:
-    - Image 1: Primary (the SDR baseline)
-    - Image 2: GainMap (the HDR gain map)
-
-    This helps HDR-aware viewers (Apple Photos, Chrome, etc.) identify
-    which image is the baseline and which is the gain map, without
-    relying solely on the binary ISO 21496-1 metadata.
-
-    Uses the Google Container XMP namespace (XMP-GContainer), which
-    is the de facto standard for multi-image JPEG containers.
-    """
-    subprocess.run(
-        [
-            "exiftool",
+    # --- XMP Container Directory (Primary + GainMap labels) ---
+    if enableXmpDir:
+        args += [
             "-struct",
             "-XMP-GContainer:ContainerDirectory="
             "[{DirectoryItemSemantic=Primary,DirectoryItemMime=image/jpeg},"
             "{DirectoryItemSemantic=GainMap,DirectoryItemMime=image/jpeg}]",
-            "-overwrite_original",
-            outputJpegPath,
-        ],
-        check=True,
-        capture_output=True,
-    )
+        ]
 
+    # --- CCV luminance + XMP-hdrgm gain map parameters ---
+    if enableCcv and gainmapMetadata is not None and hdrLinear is not None:
+        lumWeights = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+        luminanceMap = np.dot(hdrLinear, lumWeights)
 
-def writeCcvMetadata(gainmapMetadata, hdrLinear, outputJpegPath):
-    """Write Color Volume (CCV) metadata in the XMP-hdr namespace.
+        maxNits = float(np.max(luminanceMap)) * SDR_WHITE_NITS
+        avgNits = float(np.mean(luminanceMap)) * SDR_WHITE_NITS
+        minNits = float(np.min(np.clip(luminanceMap, 1e-6, None))) * SDR_WHITE_NITS
 
-    Computes actual luminance values in nits from the HDR linear data
-    and writes them alongside Display P3 color primaries and D65 white
-    point — matching the format that WebSharpPro and Apple HDR viewers expect.
+        p3Primaries = "0.6800,0.3200,0.2650,0.6900,0.1500,0.0600"
+        d65White = "0.3127,0.3290"
 
-    Also writes gain map parameters in the XMP-hdrgm namespace for
-    compatibility with viewers that read XMP instead of the binary
-    ISO 21496-1 metadata.
+        args += [
+            f"-XMP-hdr:CCVMaxLuminanceNits={maxNits:.6f}",
+            f"-XMP-hdr:CCVMinLuminanceNits={minNits:.6f}",
+            f"-XMP-hdr:CCVAvgLuminanceNits={avgNits:.6f}",
+            f"-XMP-hdr:CCVPrimariesXY={p3Primaries}",
+            f"-XMP-hdr:CCVWhiteXY={d65White}",
+            "-XMP-hdr:SceneReferred=False",
+        ]
 
-    Args:
-        gainmapMetadata: The metadata dict from gainmapData["metadata"].
-        hdrLinear: The original HDR linear array (for luminance computation).
-        outputJpegPath: Path to the output JPEG to write metadata into.
-    """
-    # Compute luminance in nits from linear-light HDR data.
-    # ITU-R BT.709 luminance weights (same for P3 and sRGB).
-    lumWeights = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
-    luminanceMap = np.dot(hdrLinear, lumWeights)
+        hdrCapacityMax = math.log2(
+            max(gainmapMetadata.get("alternate_hdr_headroom", 1.0), 1.001)
+        )
+        hdrCapacityMin = math.log2(
+            max(gainmapMetadata.get("baseline_hdr_headroom", 1.0), 1.001)
+        )
+        gmMin = gainmapMetadata.get("gainmap_min", (0.0, 0.0, 0.0))
+        gmMax = gainmapMetadata.get("gainmap_max", (1.0, 1.0, 1.0))
+        gmGamma = gainmapMetadata.get("gainmap_gamma", (1.0, 1.0, 1.0))
+        offsetSdr = gainmapMetadata.get("baseline_offset", (0.0, 0.0, 0.0))
+        offsetHdr = gainmapMetadata.get("alternate_offset", (0.0, 0.0, 0.0))
 
-    maxNits = float(np.max(luminanceMap)) * SDR_WHITE_NITS
-    avgNits = float(np.mean(luminanceMap)) * SDR_WHITE_NITS
-    minNits = float(np.min(np.clip(luminanceMap, 1e-6, None))) * SDR_WHITE_NITS
+        args += [
+            f"-XMP-hdrgm:HDRCapacityMax={hdrCapacityMax:.6f}",
+            f"-XMP-hdrgm:HDRCapacityMin={hdrCapacityMin:.6f}",
+            f"-XMP-hdrgm:GainMapMax={sum(gmMax) / 3.0:.6f}",
+            f"-XMP-hdrgm:GainMapMin={sum(gmMin) / 3.0:.6f}",
+            f"-XMP-hdrgm:Gamma={sum(gmGamma) / 3.0:.6f}",
+            f"-XMP-hdrgm:OffsetSDR={sum(offsetSdr) / 3.0:.6f}",
+            f"-XMP-hdrgm:OffsetHDR={sum(offsetHdr) / 3.0:.6f}",
+            "-XMP-hdrgm:BaseRenditionIsHDR=False",
+            "-XMP-hdrgm:Version=1.0",
+        ]
 
-    # Display P3 primaries (CIE xy) and D65 white point
-    p3Primaries = "0.6800,0.3200,0.2650,0.6900,0.1500,0.0600"
-    d65White = "0.3127,0.3290"
-
-    # XMP-hdr: CCV metadata (luminance + color volume)
-    ccvArgs = [
-        f"-XMP-hdr:CCVMaxLuminanceNits={maxNits:.6f}",
-        f"-XMP-hdr:CCVMinLuminanceNits={minNits:.6f}",
-        f"-XMP-hdr:CCVAvgLuminanceNits={avgNits:.6f}",
-        f"-XMP-hdr:CCVPrimariesXY={p3Primaries}",
-        f"-XMP-hdr:CCVWhiteXY={d65White}",
-        "-XMP-hdr:SceneReferred=False",
+    # --- ICC profile re-embed + ColorSpace (always runs last) ---
+    args += [
+        f"-icc_profile<={iccPath}",
+        "-EXIF:ColorSpace=Uncalibrated",
+        "-overwrite_original",
+        outputJpegPath,
     ]
 
-    # XMP-hdrgm: gain map parameters (mirrors binary ISO metadata)
-    hdrCapacityMax = math.log2(
-        max(gainmapMetadata.get("alternate_hdr_headroom", 1.0), 1.001)
-    )
-    hdrCapacityMin = math.log2(
-        max(gainmapMetadata.get("baseline_hdr_headroom", 1.0), 1.001)
-    )
-    gmMin = gainmapMetadata.get("gainmap_min", (0.0, 0.0, 0.0))
-    gmMax = gainmapMetadata.get("gainmap_max", (1.0, 1.0, 1.0))
-    gmGamma = gainmapMetadata.get("gainmap_gamma", (1.0, 1.0, 1.0))
-    offsetSdr = gainmapMetadata.get("baseline_offset", (0.0, 0.0, 0.0))
-    offsetHdr = gainmapMetadata.get("alternate_offset", (0.0, 0.0, 0.0))
-
-    hdrgmArgs = [
-        f"-XMP-hdrgm:HDRCapacityMax={hdrCapacityMax:.6f}",
-        f"-XMP-hdrgm:HDRCapacityMin={hdrCapacityMin:.6f}",
-        f"-XMP-hdrgm:GainMapMax={sum(gmMax) / 3.0:.6f}",
-        f"-XMP-hdrgm:GainMapMin={sum(gmMin) / 3.0:.6f}",
-        f"-XMP-hdrgm:Gamma={sum(gmGamma) / 3.0:.6f}",
-        f"-XMP-hdrgm:OffsetSDR={sum(offsetSdr) / 3.0:.6f}",
-        f"-XMP-hdrgm:OffsetHDR={sum(offsetHdr) / 3.0:.6f}",
-        "-XMP-hdrgm:BaseRenditionIsHDR=False",
-        "-XMP-hdrgm:Version=1.0",
-    ]
-
-    subprocess.run(
-        ["exiftool"] + ccvArgs + hdrgmArgs + ["-overwrite_original", outputJpegPath],
-        check=True,
-        capture_output=True,
-    )
+    subprocess.run(args, check=True, capture_output=True)
 
 
 # ───────────────────────────────────────────────────────
 # Preview generation
 # ───────────────────────────────────────────────────────
 
-def savePreviewImages(sdrGamma, gainmapData, outputPath, previewDir):
+def savePreviewImages(gainmapData, outputPath, previewDir):
     """Save preview images for the proofing page.
 
     Generates three files in previewDir:
-    - sdr_preview.jpg: The SDR baseline (what non-HDR displays see)
+    - sdr_preview.jpg: The SDR baseline with Image P3 ICC profile
     - gainmap_preview.jpg: The RGB gain map visualization
     - output_preview.jpg: A copy of the final gain map JPEG
 
     All previews are resized to max 1600px long edge for fast loading.
+    The SDR preview embeds the same ICC profile as the output JPEG so
+    the browser renders its colors accurately.
     """
     from PIL import Image
 
+    p3IccProfile = _loadIccProfile()
     maxPreviewEdge = 1600
 
-    def _saveResizedJpeg(arr, path):
+    def _saveResizedJpeg(arr, path, iccProfile=None):
         img = Image.fromarray(arr)
         w, h = img.size
         scale = min(maxPreviewEdge / max(w, h), 1.0)
@@ -464,12 +478,21 @@ def savePreviewImages(sdrGamma, gainmapData, outputPath, previewDir):
             newW = int(w * scale)
             newH = int(h * scale)
             img = img.resize((newW, newH), Image.LANCZOS)
-        img.save(path, "JPEG", quality=85)
+        saveKwargs = {"quality": 85}
+        if iccProfile:
+            saveKwargs["icc_profile"] = iccProfile
+        img.save(path, "JPEG", **saveKwargs)
 
-    _saveResizedJpeg(sdrGamma, os.path.join(previewDir, "sdr_preview.jpg"))
+    _saveResizedJpeg(
+        gainmapData["baseline"],
+        os.path.join(previewDir, "sdr_preview.jpg"),
+        iccProfile=p3IccProfile,
+    )
 
-    gainmapArr = gainmapData["gainmap"]
-    _saveResizedJpeg(gainmapArr, os.path.join(previewDir, "gainmap_preview.jpg"))
+    _saveResizedJpeg(
+        gainmapData["gainmap"],
+        os.path.join(previewDir, "gainmap_preview.jpg"),
+    )
 
     shutil.copy2(outputPath, os.path.join(previewDir, "output_preview.jpg"))
 
