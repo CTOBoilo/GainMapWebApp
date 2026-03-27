@@ -2,7 +2,7 @@
 
 A web application for creating **ISO 21496-1 gain map JPEGs** from HDR and SDR source images. Outputs a single JPEG file that displays correctly on both standard (SDR) and HDR-capable displays — with the SDR version as the baseline and HDR headroom encoded in an embedded gain map.
 
-Inspired by [WebSharpPro](https://gregbenzphotography.com/web-sharp-pro-panel) by **Greg Benz** — a Lightroom plugin for HDR gain map JPEGs. This tool is an open, self-hosted alternative for photographers who want flexibility outside the LR ecosystem.
+Inspired by [WebSharpPro](https://gregbenzphotography.com/photography-tutorials/websharppro-hdr-jpegs/) by **Greg Benz** — a Lightroom plugin for HDR gain map JPEGs. This tool is an open, self-hosted alternative for photographers who want flexibility outside the LR ecosystem.
 
 ---
 
@@ -41,6 +41,7 @@ HDR and SDR images **must have identical dimensions**. Export both at the same r
 ## Requirements
 
 - **Python 3.11+** (tested with 3.12)
+- **Disk / RAM** — Full-res 32-bit float TIFF pairs can be 2 GB+ each; the app does not cap upload size by default (intended for local or trusted internal hosts).
 - **exiftool** — system binary for metadata handling. Install separately:
   - macOS: `brew install exiftool`
   - Ubuntu/Debian: `apt install libimage-exiftool-perl`
@@ -53,7 +54,7 @@ HDR and SDR images **must have identical dimensions**. Export both at the same r
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/GainMapWebApp.git
+git clone https://github.com/CTOBoilo/GainMapWebApp.git
 cd GainMapWebApp
 ```
 
@@ -87,20 +88,20 @@ source venv/bin/activate
 python app.py
 ```
 
-Opens at `http://127.0.0.1:5000`. Upload limit: 2 GB combined (HDR + SDR).
+Opens at `http://127.0.0.1:5000` by default. If port 5000 is busy (macOS AirPlay Receiver often claims it), the app automatically falls back to port 5001. You can also set a port explicitly:
+
+```bash
+PORT=5001 python app.py
+```
+
+There is no upload size limit — full-res 32-bit TIFFs are expected.
 
 ### Production (internal / LAN)
 
-To serve on your network (e.g. for team access), bind to all interfaces:
-
-```bash
-python app.py
-```
-
-Then in `app.py`, change the last line to:
+To serve on your local network (e.g. for team access or iPad), bind to all interfaces by changing the last line in `app.py`:
 
 ```python
-app.run(host="0.0.0.0", debug=False)
+app.run(host="0.0.0.0", debug=False, port=port)
 ```
 
 For production use, run behind **gunicorn** (or similar) and **nginx** for:
@@ -139,7 +140,7 @@ The output is an **ISO 21496-1 gain map JPEG**:
 
 - **Baseline image**: SDR fallback — displays on any device.
 - **Gain map**: Encodes how to reconstruct HDR from the baseline.
-- **Embedded ICC profile**: Display P3 (image P3).
+- **Embedded ICC profile**: Image P3 (Adobe's P3 profile with sRGB transfer curve).
 - **Metadata**: EXIF (camera info), XMP Container (Primary/GainMap labels), XMP-hdr (CCV luminance nits), XMP-hdrgm (gain map parameters).
 
 Supported by Apple Photos, Chrome, and other HDR-aware viewers.
@@ -154,7 +155,7 @@ GainMapWebApp/
 ├── processing.py       # Image reading, gain map computation, metadata
 ├── requirements.txt    # Python dependencies
 ├── icc/
-│   └── imageP3.icc     # Display P3 ICC profile (embedded in output)
+│   └── imageP3.icc     # Image P3 ICC profile (embedded in output)
 ├── static/
 │   └── style.css       # UI styling
 ├── templates/
@@ -169,7 +170,7 @@ GainMapWebApp/
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| **JPEG Quality** | Quality for baseline and gain map encoding (1–100) | 95 |
+| **JPEG Quality** | JPEG quality for both baseline and gain map (1–100) | 95 |
 | **Resize output** | Downscale before encoding | Off |
 | **Long edge (px)** | Target length of longest side when resizing | 2160 |
 | **Sharpen amount** | Output sharpening strength when resizing (0–500) | 100 |
@@ -184,6 +185,7 @@ GainMapWebApp/
 - **Linear light**: HDR and SDR are converted to linear light before computing the gain map. The SDR gamma curve is removed using the correct EOTF for the selected color space (sRGB piece-wise, Adobe RGB γ2.2, ProPhoto γ1.8).
 - **Baseline preservation**: The app keeps the original gamma-encoded SDR pixels for the JPEG baseline instead of linearizing and re-encoding. This avoids subtle tonal shifts from round-trip precision loss.
 - **RGB gain maps**: Per-channel gain maps are used (not grayscale) for better color accuracy in highlights.
+- **HDR banding**: ISO 21496-1 stores the gain map as 8-bit JPEG. Smooth sky gradients can show subtle contouring on HDR displays. Computing the gain map at full resolution (before any resize) minimizes this.
 - **exiftool**: Used for EXIF copying and XMP metadata. The app calls the `exiftool` binary directly — it must be installed and on your `PATH`.
 
 ---
