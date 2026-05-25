@@ -1,0 +1,66 @@
+<div class="options-panel">
+    <div class="options-header">
+        <span>Options</span>
+        <span class="options-arrow">&#9660;</span>
+    </div>
+
+    <div class="options-body">
+
+        <div class="option-row">
+            <label>JPEG Quality</label>
+            <div class="slider-row">
+                <input type="range" name="jpeg_quality"
+                       min="1" max="100" value="95">
+                <span class="slider-value">95</span>
+            </div>
+        </div>
+
+        <div class="option-row">
+            <div class="checkbox-row">
+                <input type="checkbox" name="enable_resize">
+                <label>Resize output</label>
+            </div>
+        </div>
+
+        <div class="option-sub">
+            <div class="option-row">
+                <label>Long edge (px)</label>
+                <input type="number" name="long_edge"
+                       value="2160" min="100" max="20000" step="1">
+            </div>
+            <div class="option-row">
+                <label>Sharpen amount</label>
+                <div class="slider-row">
+                    <input type="range" name="sharpen_amount"
+                           min="0" max="500" value="100">
+                    <span class="slider-value">100</span>
+                </div>
+                <span class="hint">Output sharpening compensates for softness from downscaling. 0 = off, 50-150 typical for web.</span>
+            </div>
+        </div>
+
+        <div class="option-row">
+            <div class="checkbox-row">
+                <input type="checkbox" name="enable_exif" checked>
+                <label>Preserve EXIF metadata</label>
+            </div>
+            <span class="hint">Copy camera info (model, lens, exposure, GPS) from SDR source</span>
+        </div>
+
+        <div class="option-row">
+            <div class="checkbox-row">
+                <input type="checkbox" name="enable_xmp_dir" checked>
+                <label>XMP Directory Item Semantic</label>
+            </div>
+            <span class="hint">Label images as Primary + GainMap for HDR viewer compatibility</span>
+        </div>
+
+        <div class="option-row">
+            <div class="checkbox-row">
+                <input type="checkbox" name="enable_ccv" checked>
+                <label>CCV luminance metadata</label>
+            </div>
+            <span class="hint">Write gain map parameters as XMP for wider viewer support</span>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Processing</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container batch-container">
+        <h1>Batch Processing</h1>
+
+        <div class="progress-section" id="progressSection">
+            <div class="progress-status" id="progressStatus">Starting&hellip;</div>
+
+            <div class="progress-bar-track">
+                <div class="progress-bar-fill" id="progressFill" style="width: 0%"></div>
+            </div>
+
+            <div class="progress-detail" id="progressDetail">0 / {{ total }}</div>
+        </div>
+
+        <div class="batch-done hidden" id="doneSection">
+            <div class="batch-summary" id="batchSummary"></div>
+
+            <a href="/batch/download/{{ sessionId }}" class="btn btn-primary btn-large" id="downloadBtn">
+                Download ZIP
+            </a>
+            <a href="/" class="btn btn-secondary">New Conversion</a>
+        </div>
+
+        <div class="batch-errors hidden" id="errorsSection">
+            <h2>Errors</h2>
+            <ul id="errorsList"></ul>
+        </div>
+
+        {% if unmatchedHdr %}
+        <div class="batch-warnings">
+            <strong>Skipped HDR (no matching SDR):</strong> {{ unmatchedHdr | join(', ') }}
+        </div>
+        {% endif %}
+
+        {% if unmatchedSdr %}
+        <div class="batch-warnings">
+            <strong>Skipped SDR (no matching HDR):</strong> {{ unmatchedSdr | join(', ') }}
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+    (function() {
+        var sessionId = '{{ sessionId }}';
+        var total = {{ total }};
+        var progressSection = document.getElementById('progressSection');
+        var doneSection = document.getElementById('doneSection');
+        var errorsSection = document.getElementById('errorsSection');
+        var progressFill = document.getElementById('progressFill');
+        var progressStatus = document.getElementById('progressStatus');
+        var progressDetail = document.getElementById('progressDetail');
+        var batchSummary = document.getElementById('batchSummary');
+        var errorsList = document.getElementById('errorsList');
+
+        function poll() {
+            fetch('/batch/status/' + sessionId)
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var pct = total > 0 ? Math.round((data.completed / total) * 100) : 0;
+                    progressFill.style.width = pct + '%';
+                    progressDetail.textContent = data.completed + ' / ' + total;
+
+                    if (data.current) {
+                        progressStatus.textContent = 'Processing: ' + data.current;
+                    } else if (!data.done) {
+                        progressStatus.textContent = 'Starting\u2026';
+                    }
+
+                    if (data.done) {
+                        progressSection.classList.add('hidden');
+                        doneSection.classList.remove('hidden');
+
+                        var succeeded = total - data.errors.length;
+                        batchSummary.textContent = succeeded + ' of ' + total + ' images processed successfully.';
+
+                        if (data.errors.length > 0) {
+                            errorsSection.classList.remove('hidden');
+                            errorsList.innerHTML = '';
+                            data.errors.forEach(function(err) {
+                                var li = document.createElement('li');
+                                li.textContent = err.file + ': ' + err.error;
+                                errorsList.appendChild(li);
+                            });
+                        }
+                    } else {
+                        setTimeout(poll, 2000);
+                    }
+                })
+                .catch(function() {
+                    setTimeout(poll, 3000);
+                });
+        }
+
+        poll();
+    })();
+    </script>
+</body>
+</html>

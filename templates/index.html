@@ -11,9 +11,18 @@
         <h1>Gain Map JPEG Tool</h1>
         <p>Upload an HDR source and an SDR source to create an ISO 21496-1 gain map JPEG with RGB gain maps.</p>
 
-        <form id="convertForm" action="/convert" method="POST" enctype="multipart/form-data">
+        {# ── Mode toggle ── #}
 
-            {# ── File inputs ── #}
+        <div class="mode-toggle">
+            <button type="button" class="mode-btn active" id="modeSingle">Single</button>
+            <button type="button" class="mode-btn" id="modeBatch">Batch</button>
+        </div>
+
+        {# ══════════════════════════════════════════════
+           Single mode form (existing)
+           ══════════════════════════════════════════════ #}
+
+        <form id="convertForm" action="/convert" method="POST" enctype="multipart/form-data">
 
             <div class="upload-group">
                 <label for="hdr_file">HDR Source</label>
@@ -46,79 +55,60 @@
                 </select>
             </div>
 
-            {# ── Options panel ── #}
+            {% include "_options_panel.html" %}
 
-            <div class="options-panel">
-                <div class="options-header" id="optionsToggle">
-                    <span>Options</span>
-                    <span class="options-arrow" id="optionsArrow">&#9660;</span>
-                </div>
+            <button type="submit" id="submitBtn">Create Gain Map JPEG</button>
+        </form>
 
-                <div class="options-body" id="optionsBody">
+        {# ══════════════════════════════════════════════
+           Batch mode form
+           ══════════════════════════════════════════════ #}
 
-                    {# JPEG quality #}
-                    <div class="option-row">
-                        <label for="jpeg_quality">JPEG Quality</label>
-                        <div class="slider-row">
-                            <input type="range" id="jpeg_quality" name="jpeg_quality"
-                                   min="1" max="100" value="95">
-                            <span class="slider-value" id="jpegQualityValue">95</span>
-                        </div>
-                    </div>
+        <form id="batchForm" action="/batch" method="POST" enctype="multipart/form-data" class="hidden">
 
-                    {# Resize #}
-                    <div class="option-row">
-                        <div class="checkbox-row">
-                            <input type="checkbox" id="enable_resize" name="enable_resize">
-                            <label for="enable_resize">Resize output</label>
-                        </div>
-                    </div>
+            <div class="batch-naming-hint">
+                <strong>How pairing works:</strong> Name your files with <code>_hdr</code> and
+                <code>_sdr</code> suffixes. The app strips these to find the base name and
+                pairs them automatically.<br>
+                Example: <code>sunset_001_hdr.tif</code> pairs with <code>sunset_001_sdr.tif</code>
+            </div>
 
-                    <div class="option-sub" id="resizeOptions">
-                        <div class="option-row">
-                            <label for="long_edge">Long edge (px)</label>
-                            <input type="number" id="long_edge" name="long_edge"
-                                   value="2160" min="100" max="20000" step="1">
-                        </div>
-                        <div class="option-row">
-                            <label for="sharpen_amount">Sharpen amount</label>
-                            <div class="slider-row">
-                                <input type="range" id="sharpen_amount" name="sharpen_amount"
-                                       min="0" max="500" value="100">
-                                <span class="slider-value" id="sharpenValue">100</span>
-                            </div>
-                            <span class="hint">Output sharpening compensates for softness from downscaling. 0 = off, 50-150 typical for web.</span>
-                        </div>
-                    </div>
-
-                    {# Metadata toggles #}
-                    <div class="option-row">
-                        <div class="checkbox-row">
-                            <input type="checkbox" id="enable_exif" name="enable_exif" checked>
-                            <label for="enable_exif">Preserve EXIF metadata</label>
-                        </div>
-                        <span class="hint">Copy camera info (model, lens, exposure, GPS) from SDR source</span>
-                    </div>
-
-                    <div class="option-row">
-                        <div class="checkbox-row">
-                            <input type="checkbox" id="enable_xmp_dir" name="enable_xmp_dir" checked>
-                            <label for="enable_xmp_dir">XMP Directory Item Semantic</label>
-                        </div>
-                        <span class="hint">Label images as Primary + GainMap for HDR viewer compatibility</span>
-                    </div>
-
-                    <div class="option-row">
-                        <div class="checkbox-row">
-                            <input type="checkbox" id="enable_ccv" name="enable_ccv" checked>
-                            <label for="enable_ccv">CCV luminance metadata</label>
-                        </div>
-                        <span class="hint">Write gain map parameters as XMP for wider viewer support</span>
-                    </div>
+            <div class="upload-group">
+                <label>HDR Sources</label>
+                <span class="hint">Linear 32-bit TIFFs (P3 gamut) — select multiple files</span>
+                <div class="drop-zone" id="batchHdrDropZone">
+                    <input type="file" id="batch_hdr_files" name="hdr_files" accept=".tif,.tiff" multiple required>
+                    <span class="drop-label">Choose files or drag &amp; drop here</span>
+                    <button type="button" class="clear-btn hidden" id="batchHdrClearBtn" title="Clear files">&times;</button>
                 </div>
             </div>
 
-            <button type="submit" id="submitBtn">Create Gain Map JPEG</button>
+            <div class="upload-group">
+                <label>SDR Sources</label>
+                <span class="hint">16-bit TIFFs — same filenames as the HDR set above</span>
+                <div class="drop-zone" id="batchSdrDropZone">
+                    <input type="file" id="batch_sdr_files" name="sdr_files" accept=".tif,.tiff" multiple required>
+                    <span class="drop-label">Choose files or drag &amp; drop here</span>
+                    <button type="button" class="clear-btn hidden" id="batchSdrClearBtn" title="Clear files">&times;</button>
+                </div>
+            </div>
+
+            <div id="batchMatchInfo" class="batch-match-info hidden"></div>
+
+            <div class="upload-group">
+                <label for="batch_sdr_colorspace">SDR Color Space</label>
+                <span class="hint">Must match the color space your SDR TIFFs were exported in</span>
+                <select id="batch_sdr_colorspace" name="sdr_colorspace">
+                    <option value="srgb" selected>sRGB</option>
+                    <option value="display_p3">Display P3</option>
+                    <option value="adobe_rgb">Adobe RGB (1998)</option>
+                    <option value="prophoto_rgb">ProPhoto RGB</option>
+                </select>
+            </div>
+
+            {% include "_options_panel.html" %}
+
+            <button type="submit" id="batchSubmitBtn">Create Gain Map JPEGs</button>
         </form>
 
         <div id="loadingOverlay" class="loading-overlay hidden">
@@ -136,7 +126,28 @@
 
     <script>
     (function() {
-        function setupDropZone(zoneId, inputId, clearBtnId) {
+        // ── Mode toggle ──
+        var singleBtn = document.getElementById('modeSingle');
+        var batchBtn = document.getElementById('modeBatch');
+        var singleForm = document.getElementById('convertForm');
+        var batchForm = document.getElementById('batchForm');
+
+        singleBtn.addEventListener('click', function() {
+            singleBtn.classList.add('active');
+            batchBtn.classList.remove('active');
+            singleForm.classList.remove('hidden');
+            batchForm.classList.add('hidden');
+        });
+
+        batchBtn.addEventListener('click', function() {
+            batchBtn.classList.add('active');
+            singleBtn.classList.remove('active');
+            batchForm.classList.remove('hidden');
+            singleForm.classList.add('hidden');
+        });
+
+        // ── Single-mode drop zones ──
+        function setupDropZone(zoneId, inputId, clearBtnId, isMultiple) {
             var zone = document.getElementById(zoneId);
             var input = document.getElementById(inputId);
             var label = zone.querySelector('.drop-label');
@@ -144,22 +155,30 @@
 
             function updateLabel() {
                 if (input.files && input.files.length > 0) {
-                    label.textContent = input.files[0].name;
+                    if (isMultiple) {
+                        label.textContent = input.files.length + ' file' + (input.files.length > 1 ? 's' : '') + ' selected';
+                    } else {
+                        label.textContent = input.files[0].name;
+                    }
                     zone.classList.add('has-file');
                     clearBtn.classList.remove('hidden');
                 } else {
-                    label.textContent = 'Choose file or drag & drop here';
+                    label.textContent = isMultiple ? 'Choose files or drag & drop here' : 'Choose file or drag & drop here';
                     zone.classList.remove('has-file');
                     clearBtn.classList.add('hidden');
                 }
             }
 
-            input.addEventListener('change', updateLabel);
+            input.addEventListener('change', function() {
+                updateLabel();
+                if (isMultiple) updateBatchMatchInfo();
+            });
 
             clearBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
                 input.value = '';
                 updateLabel();
+                if (isMultiple) updateBatchMatchInfo();
             });
 
             zone.addEventListener('dragover', function(e) {
@@ -176,55 +195,125 @@
                 if (e.dataTransfer.files.length > 0) {
                     input.files = e.dataTransfer.files;
                     updateLabel();
+                    if (isMultiple) updateBatchMatchInfo();
                 }
             });
         }
 
-        setupDropZone('hdrDropZone', 'hdr_file', 'hdrClearBtn');
-        setupDropZone('sdrDropZone', 'sdr_file', 'sdrClearBtn');
+        setupDropZone('hdrDropZone', 'hdr_file', 'hdrClearBtn', false);
+        setupDropZone('sdrDropZone', 'sdr_file', 'sdrClearBtn', false);
+        setupDropZone('batchHdrDropZone', 'batch_hdr_files', 'batchHdrClearBtn', true);
+        setupDropZone('batchSdrDropZone', 'batch_sdr_files', 'batchSdrClearBtn', true);
 
-        // Options panel toggle
-        var toggle = document.getElementById('optionsToggle');
-        var body = document.getElementById('optionsBody');
-        var arrow = document.getElementById('optionsArrow');
+        // ── Batch pair matching preview ──
+        function getStem(filename) {
+            var dot = filename.lastIndexOf('.');
+            var stem = dot > 0 ? filename.substring(0, dot) : filename;
+            var lower = stem.toLowerCase();
+            if (lower.endsWith('_hdr') || lower.endsWith('_sdr')) {
+                stem = stem.substring(0, stem.length - 4);
+            }
+            return stem;
+        }
 
-        toggle.addEventListener('click', function() {
+        function updateBatchMatchInfo() {
+            var hdrInput = document.getElementById('batch_hdr_files');
+            var sdrInput = document.getElementById('batch_sdr_files');
+            var infoDiv = document.getElementById('batchMatchInfo');
+
+            if (!hdrInput.files.length || !sdrInput.files.length) {
+                infoDiv.classList.add('hidden');
+                return;
+            }
+
+            var hdrStems = {};
+            for (var i = 0; i < hdrInput.files.length; i++) {
+                hdrStems[getStem(hdrInput.files[i].name)] = true;
+            }
+
+            var sdrStems = {};
+            for (var j = 0; j < sdrInput.files.length; j++) {
+                sdrStems[getStem(sdrInput.files[j].name)] = true;
+            }
+
+            var matched = [];
+            var unmatchedHdr = [];
+            var unmatchedSdr = [];
+
+            for (var stem in hdrStems) {
+                if (sdrStems[stem]) {
+                    matched.push(stem);
+                } else {
+                    unmatchedHdr.push(stem);
+                }
+            }
+            for (var stem2 in sdrStems) {
+                if (!hdrStems[stem2]) {
+                    unmatchedSdr.push(stem2);
+                }
+            }
+
+            var html = '<strong>' + matched.length + ' pair' + (matched.length !== 1 ? 's' : '') + ' matched</strong>';
+
+            if (unmatchedHdr.length > 0) {
+                html += '<br><span class="match-warning">Unmatched HDR: ' + unmatchedHdr.join(', ') + '</span>';
+            }
+            if (unmatchedSdr.length > 0) {
+                html += '<br><span class="match-warning">Unmatched SDR: ' + unmatchedSdr.join(', ') + '</span>';
+            }
+            if (matched.length === 0) {
+                html += '<br><span class="match-error">No pairs found. HDR and SDR filenames must match.</span>';
+            }
+
+            infoDiv.innerHTML = html;
+            infoDiv.classList.remove('hidden');
+        }
+
+        // ── Options panel toggle (shared) ──
+        document.addEventListener('click', function(e) {
+            var header = e.target.closest('.options-header');
+            if (!header) return;
+            var body = header.nextElementSibling;
+            var arrow = header.querySelector('.options-arrow');
             var isOpen = body.classList.toggle('open');
             arrow.style.transform = isOpen ? 'rotate(180deg)' : '';
         });
 
-        // Resize sub-options visibility
-        var resizeCheck = document.getElementById('enable_resize');
-        var resizeOpts = document.getElementById('resizeOptions');
-
-        function updateResizeVisibility() {
-            resizeOpts.style.display = resizeCheck.checked ? 'block' : 'none';
-        }
-        resizeCheck.addEventListener('change', updateResizeVisibility);
-        updateResizeVisibility();
-
-        // Slider live values
-        var qualitySlider = document.getElementById('jpeg_quality');
-        var qualityDisplay = document.getElementById('jpegQualityValue');
-        qualitySlider.addEventListener('input', function() {
-            qualityDisplay.textContent = qualitySlider.value;
+        // ── Resize sub-options visibility ──
+        document.addEventListener('change', function(e) {
+            if (e.target.name === 'enable_resize') {
+                var sub = e.target.closest('.options-body').querySelector('.option-sub');
+                if (sub) sub.style.display = e.target.checked ? 'block' : 'none';
+            }
         });
 
-        var sharpenSlider = document.getElementById('sharpen_amount');
-        var sharpenDisplay = document.getElementById('sharpenValue');
-        sharpenSlider.addEventListener('input', function() {
-            sharpenDisplay.textContent = sharpenSlider.value;
+        // Initialize resize visibility for both forms
+        document.querySelectorAll('[name="enable_resize"]').forEach(function(cb) {
+            var sub = cb.closest('.options-body').querySelector('.option-sub');
+            if (sub) sub.style.display = cb.checked ? 'block' : 'none';
         });
 
-        // Loading spinner
-        var form = document.getElementById('convertForm');
+        // ── Slider live values ──
+        document.addEventListener('input', function(e) {
+            if (e.target.type === 'range') {
+                var valueSpan = e.target.parentElement.querySelector('.slider-value');
+                if (valueSpan) valueSpan.textContent = e.target.value;
+            }
+        });
+
+        // ── Loading spinner (both forms) ──
         var overlay = document.getElementById('loadingOverlay');
-        var submitBtn = document.getElementById('submitBtn');
 
-        form.addEventListener('submit', function() {
+        singleForm.addEventListener('submit', function() {
             overlay.classList.remove('hidden');
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Processing\u2026';
+            document.getElementById('submitBtn').disabled = true;
+            document.getElementById('submitBtn').textContent = 'Processing\u2026';
+        });
+
+        batchForm.addEventListener('submit', function() {
+            overlay.classList.remove('hidden');
+            document.getElementById('batchSubmitBtn').disabled = true;
+            document.getElementById('batchSubmitBtn').textContent = 'Uploading\u2026';
         });
     })();
     </script>
