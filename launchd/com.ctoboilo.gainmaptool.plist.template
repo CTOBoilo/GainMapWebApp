@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ctoboilo.gainmaptool</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__APP_DIR__/venv/bin/python</string>
+        <string>__APP_DIR__/app.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__APP_DIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PORT</key>
+        <string>5001</string>
+        <key>DEBUG</key>
+        <string>0</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__APP_DIR__/logs/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__APP_DIR__/logs/stderr.log</string>
+</dict>
+</plist>

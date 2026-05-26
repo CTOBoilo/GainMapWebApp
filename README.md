@@ -165,6 +165,22 @@ Your display has to be HDR-capable and the viewer has to support gain map JPEGs.
 
 ---
 
+## Optional — run as a background service (macOS only)
+
+If you use the app regularly and don't want to keep a terminal window open, you can install it as a launchd background service. It survives terminal closes; it won't auto-start at login or auto-restart on crash — you stay in control.
+
+```bash
+./service-install.sh   # register the service (one-time)
+./service-start.sh     # start it in the background
+./service-status.sh    # check if it's running
+./service-stop.sh      # stop it
+./service-uninstall.sh # remove it completely
+```
+
+Logs are written to `logs/stdout.log` and `logs/stderr.log` inside the project folder. The service runs on port 5001 with debug mode off.
+
+---
+
 ## Updating to a new version
 
 When a new version is released, either:
