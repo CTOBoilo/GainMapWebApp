@@ -534,7 +534,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debugMode = os.environ.get("DEBUG", "1") == "1"
     try:
-        app.run(debug=debugMode, port=port)
+        app.run(host="0.0.0.0", debug=debugMode, port=port)
     except OSError:
         print(f"Port {port} is busy (macOS AirPlay often uses 5000). Trying {port + 1}.")
-        app.run(debug=debugMode, port=port + 1)
+        app.run(host="0.0.0.0", debug=debugMode, port=port + 1)
